@@ -1,0 +1,228 @@
+local uis = game:GetService("UserInputService")
+local rs = game:GetService("RunService")
+local cam = workspace.CurrentCamera
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ───────────────────────────────────────────────────────────────
+--                           GUI CREATION
+-- ───────────────────────────────────────────────────────────────
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "CameraLockGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+local frame = Instance.new("Frame")
+frame.Name = "LockFrame"
+frame.Size = UDim2.new(0, 180, 0, 90)
+frame.Position = UDim2.new(1, -190, 0, 20)
+frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+frame.BorderSizePixel = 0
+frame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = frame
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(100, 150, 255)
+stroke.Thickness = 2
+stroke.Parent = frame
+
+local button = Instance.new("TextButton")
+button.Name = "ToggleButton"
+button.Size = UDim2.new(1, -20, 0, 40)
+button.Position = UDim2.new(0, 10, 0, 10)
+button.BackgroundColor3 = Color3.fromRGB(60, 120, 255)
+button.Text = "🔒 Lock Camera"
+button.TextColor3 = Color3.fromRGB(255, 255, 255)
+button.Font = Enum.Font.GothamBold
+button.TextSize = 18
+button.BorderSizePixel = 0
+button.Parent = frame
+
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(0, 10)
+buttonCorner.Parent = button
+
+local buttonStroke = Instance.new("UIStroke")
+buttonStroke.Color = Color3.fromRGB(120, 180, 255)
+buttonStroke.Thickness = 1.5
+buttonStroke.Parent = button
+
+local creditLabel = Instance.new("TextLabel")
+creditLabel.Size = UDim2.new(1, -20, 0, 18)
+creditLabel.Position = UDim2.new(0, 10, 0, 58)
+creditLabel.BackgroundTransparency = 1
+creditLabel.Text = "made by harsheyschocolate"
+creditLabel.TextColor3 = Color3.fromRGB(160, 160, 180)
+creditLabel.Font = Enum.Font.Gotham
+creditLabel.TextSize = 13
+creditLabel.TextXAlignment = Enum.TextXAlignment.Center
+creditLabel.Parent = frame
+
+-- ───────────────────────────────────────────────────────────────
+--                          FUNCTIONALITY
+-- ───────────────────────────────────────────────────────────────
+
+local isLocked = false
+local conn
+local wheelConn
+local target
+local originalCamType
+local initialOffset = Vector3.new()
+local currentZoom = 0
+local zoomSensitivity = 2.5
+local pinchSensitivity = 25
+local minZoom = 0.5
+local maxZoom = 250
+
+local function getTargetRoot(char)
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getClosestCharacter()
+    local dist, closestChar = math.huge, nil
+    local mp = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+    
+    local localChar = player.Character
+    for _, v in workspace.Characters:GetChildren() do
+        if v == localChar then continue end
+        
+        local root = getTargetRoot(v)
+        if root then
+            local pos = cam:WorldToViewportPoint(root.Position)
+            if pos.Z > 0 then
+                local screenPos = Vector2.new(pos.X, pos.Y)
+                local mag = (screenPos - mp).Magnitude
+                
+                if mag < dist then
+                    dist = mag
+                    closestChar = v
+                end
+            end
+        end
+    end
+    return closestChar
+end
+
+local function toggleLock()
+    if isLocked then
+        if conn then conn:Disconnect() conn = nil end
+        if wheelConn then wheelConn:Disconnect() wheelConn = nil end
+        target = nil
+        initialOffset = Vector3.new()
+        currentZoom = 0
+        
+        cam.CameraType = originalCamType or Enum.CameraType.Custom
+        
+        button.Text = "🔒 Lock Camera"
+        button.BackgroundColor3 = Color3.fromRGB(60, 120, 255)
+        buttonStroke.Color = Color3.fromRGB(120, 180, 255)
+        
+        isLocked = false
+    else
+        target = getClosestCharacter()
+        if not target then return end
+        
+        local playerChar = player.Character
+        if not playerChar then return end
+        
+        local playerHRP = playerChar:FindFirstChild("HumanoidRootPart")
+        if not playerHRP then return end
+        
+        originalCamType = cam.CameraType
+        cam.CameraType = Enum.CameraType.Scriptable
+        
+        initialOffset = playerHRP.CFrame:PointToObjectSpace(cam.CFrame.Position)
+        currentZoom = initialOffset.Magnitude
+        
+        conn = rs.RenderStepped:Connect(function()
+            local playerChar = player.Character
+            if not playerChar then 
+                toggleLock()
+                return 
+            end
+            
+            local playerHRP = playerChar:FindFirstChild("HumanoidRootPart")
+            if not playerHRP then 
+                toggleLock()
+                return 
+            end
+            
+            local targetRoot = getTargetRoot(target)
+            if not targetRoot or not target.Parent then 
+                toggleLock()
+                return 
+            end
+            
+            local unitOffset = initialOffset.Unit
+            local relativePos = unitOffset * currentZoom
+            local desiredPos = playerHRP.CFrame:PointToWorldSpace(relativePos)
+            
+            local lookAtPos = targetRoot.Position
+            
+            cam.CFrame = CFrame.lookAt(desiredPos, lookAtPos)
+        end)
+        
+        wheelConn = uis.InputChanged:Connect(function(input)
+            if not isLocked then return end
+            
+            if input.UserInputType == Enum.UserInputType.MouseWheel then
+                local delta = input.Position.Z
+                currentZoom = math.clamp(currentZoom - (delta * zoomSensitivity), minZoom, maxZoom)
+            elseif input.UserInputType == Enum.UserInputType.TouchPinch then
+                local delta = input.Position.Z
+                currentZoom = math.clamp(currentZoom + (delta * pinchSensitivity), minZoom, maxZoom)
+            end
+        end)
+        
+        button.Text = "🔓 Unlock (RootPart)"
+        button.BackgroundColor3 = Color3.fromRGB(40, 200, 100)
+        buttonStroke.Color = Color3.fromRGB(80, 255, 140)
+        
+        isLocked = true
+    end
+end
+
+button.MouseButton1Click:Connect(toggleLock)
+
+uis.InputBegan:Connect(function(i, g)
+    if g then return end
+    if i.KeyCode == Enum.KeyCode.C then
+        toggleLock()
+    end
+end)
+
+local dragging = false
+local dragStart, startPos
+
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = frame.Position
+    end
+end)
+
+frame.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+uis.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
